@@ -20744,6 +20744,7 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/pci/samsung,exynos9820-pcie.yaml
 F:	Documentation/devicetree/bindings/phy/samsung,exynos9820-pcie-phy.yaml
 F:	drivers/pci/controller/dwc/pci-exynos.c
+F:	drivers/pci/controller/dwc/pcie-exynos9820.c
 F:	drivers/phy/samsung/phy-exynos9820-pcie.c
 
 PCI DRIVER FOR STM32MP25

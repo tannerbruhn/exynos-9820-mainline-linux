@@ -1,5 +1,17 @@
 # SPDX-License-Identifier: GPL-2.0
 
+config PCIE_EXYNOS9820
+	bool "Samsung Exynos9820 Wi-Fi PCIe host"
+	depends on PCI && OF && (ARCH_EXYNOS || COMPILE_TEST)
+	depends on PCI_MSI
+	select PCIE_DW_HOST
+	select PHY_EXYNOS9820_PCIE
+	help
+	  Enable the Exynos9820 channel-0 root port used by the onboard Wi-Fi.
+	  The controller uses a DesignWare core with Samsung ELBI registers
+	  and a dedicated PHY. It supports legacy INTx and noncoherent DMA
+	  with the integrated SysMMU bypassed. System sleep is not supported.
+
 menu "DesignWare-based PCIe controllers"
 	depends on PCI
 
