@@ -8,11 +8,18 @@ Until now the port had no Wi-Fi.
 > **This code was written by AI** and tested on real hardware by a human: one SM-G973F, on one
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
-> **⚠️ Known issue in v1 — do not use for heavy downloads to disk.**
-> Under sustained Wi-Fi receive combined with heavy disk I/O (for example downloading
-> multi-GB files to storage), this build can corrupt memory: downloaded files may be
-> damaged and processes may crash. Wi-Fi-only or disk-only load tested clean. The cause
-> is being tracked down in the Wi-Fi receive path; a fixed release will follow.
+> **⚠️ Known issue (affects the stock port kernel too): zram swap crashes this kernel.**
+> On the 7.2.0-rc2 kernel used by this port, the zram swap that Nura enables by default
+> (`postmarketos-zram-swap`, with `vm.swappiness=180`) oopses in `zs_malloc` under memory
+> pressure — e.g. large downloads filling the page cache, or running an LLM. Symptoms: random
+> process crashes, corrupted files, then a hard hang. Reproduced on the stock pmOS kernel as
+> well, so it is not caused by the Wi-Fi changes. Fix — disable zram swap:
+> ```sh
+> sudo swapoff -a
+> sudo systemctl mask postmarketos-zram-swap.service dev-zram0.swap
+> ```
+> With zram disabled, the same workload ran clean. (An earlier version of this note blamed the
+> Wi-Fi receive path; that was wrong.)
 
 ## What works
 
