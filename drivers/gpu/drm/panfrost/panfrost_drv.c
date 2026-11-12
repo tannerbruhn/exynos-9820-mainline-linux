@@ -1078,6 +1078,18 @@ static const struct panfrost_compatible default_data = {
 	.pm_domain_names = NULL,
 };
 
+/*
+ * The Exynos 9820 Mali-G76 integration faults with Mali LPAE tables.
+ * Match the AArch64 stage-1 format used by Samsung's kbase.
+ */
+static const struct panfrost_compatible exynos9820_data = {
+	.num_supplies = ARRAY_SIZE(default_supplies) - 1,
+	.supply_names = default_supplies,
+	.num_pm_domains = 1, /* optional */
+	.gpu_quirks = BIT(GPU_QUIRK_FORCE_AARCH64_PGTABLE),
+	.needs_pmu_power_check = true,
+};
+
 static const struct panfrost_compatible default_pm_rt_data = {
 	.num_supplies = ARRAY_SIZE(default_supplies) - 1,
 	.supply_names = default_supplies,
@@ -1154,6 +1166,7 @@ static const struct panfrost_compatible mediatek_mt8370_data = {
 
 static const struct of_device_id dt_match[] = {
 	/* Set first to probe before the generic compatibles */
+	{ .compatible = "samsung,exynos9820-mali", .data = &exynos9820_data },
 	{ .compatible = "amlogic,meson-gxm-mali",
 	  .data = &amlogic_data, },
 	{ .compatible = "amlogic,meson-g12a-mali",

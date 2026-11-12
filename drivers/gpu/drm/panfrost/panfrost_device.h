@@ -115,6 +115,9 @@ struct panfrost_compatible {
 
 	/* GPU configuration quirks */
 	u8 gpu_quirks;
+
+	/* Refuse to touch the GPU unless the PMU reports its domain on */
+	bool needs_pmu_power_check;
 };
 
 /**

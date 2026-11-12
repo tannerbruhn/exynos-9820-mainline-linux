@@ -34,6 +34,7 @@ properties:
               - rockchip,rk3562-mali
               - rockchip,rk3568-mali
               - rockchip,rk3576-mali
+              - samsung,exynos9820-mali
           - const: arm,mali-bifrost # Mali Bifrost GPU model/revision is fully discoverable
       - items:
           - enum:
@@ -74,6 +75,17 @@ properties:
   clock-names: true
 
   mali-supply: true
+
+  samsung,pmu-syscon:
+    $ref: /schemas/types.yaml#/definitions/phandle-array
+    items:
+      - items:
+          - description: phandle to the PMU system controller
+          - description: GPU power-domain status register offset
+    description:
+      Phandle of the PMU system controller and the offset of the GPU
+      power-domain status register. The driver refuses to probe unless
+      bit 0 of that register is set.
 
   sram-supply: true
 
@@ -132,6 +144,17 @@ required:
 additionalProperties: false
 
 allOf:
+  - if:
+      properties:
+        compatible:
+          contains:
+            const: samsung,exynos9820-mali
+    then:
+      required:
+        - samsung,pmu-syscon
+    else:
+      properties:
+        samsung,pmu-syscon: false
   - if:
       properties:
         compatible:

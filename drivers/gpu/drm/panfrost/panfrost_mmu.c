@@ -970,6 +970,8 @@ int panfrost_mmu_init(struct panfrost_device *pfdev)
 		return err;
 	}
 
+	panfrost_mmu_reset(pfdev);
+
 	return 0;
 }
 

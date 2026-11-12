@@ -3,6 +3,8 @@
 /* Copyright 2019 Linaro, Ltd, Rob Herring <robh@kernel.org> */
 
 #include <linux/clk.h>
+#include <linux/mfd/syscon.h>
+#include <linux/regmap.h>
 #include <linux/reset.h>
 #include <linux/platform_device.h>
 #include <linux/pm_domain.h>
@@ -18,6 +20,37 @@
 #include "panfrost_job.h"
 #include "panfrost_mmu.h"
 #include "panfrost_perfcnt.h"
+
+static int panfrost_check_pmu_power(struct panfrost_device *pfdev)
+{
+	struct device_node *np = pfdev->base.dev->of_node;
+	unsigned int args;
+	struct regmap *pmu;
+	u32 status;
+
+	if (!pfdev->comp->needs_pmu_power_check)
+		return 0;
+
+	if (!of_property_present(np, "samsung,pmu-syscon"))
+		return dev_err_probe(pfdev->base.dev, -EINVAL,
+				     "samsung,pmu-syscon is required\n");
+
+	pmu = syscon_regmap_lookup_by_phandle_args(np, "samsung,pmu-syscon",
+						   1, &args);
+	if (IS_ERR(pmu))
+		return dev_err_probe(pfdev->base.dev, PTR_ERR(pmu),
+				     "failed to get PMU syscon\n");
+
+	if (regmap_read(pmu, args, &status))
+		return dev_err_probe(pfdev->base.dev, -EIO,
+				     "failed to read PMU power status\n");
+
+	if (!(status & 1))
+		return dev_err_probe(pfdev->base.dev, -ENODEV,
+				     "GPU power domain is off\n");
+
+	return 0;
+}
 
 static int panfrost_reset_init(struct panfrost_device *pfdev)
 {
@@ -229,6 +262,10 @@ int panfrost_device_init(struct panfrost_device *pfdev)
 	mutex_init(&pfdev->debugfs.gems_lock);
 	INIT_LIST_HEAD(&pfdev->debugfs.gems_list);
 #endif
+
+	err = panfrost_check_pmu_power(pfdev);
+	if (err)
+		return err;
 
 	err = panfrost_pm_domain_init(pfdev);
 	if (err)
