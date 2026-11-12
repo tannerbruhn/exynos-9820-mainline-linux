@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/phy/samsung,exynos9820-pcie-phy.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Samsung Exynos9820 channel-0 PCIe PHY
+
+maintainers:
+  - Marek Szyprowski <m.szyprowski@samsung.com>
+
+description: |
+  Single-lane 26 MHz reference Gen2 PHY. The associated PCIe host owns
+  the clocks and ELBI reset controls. Initialization releases PMU isolation
+  and selects lane 0; power-on programs PMA/PCS after PCS reset. The host
+  releases MAC/PMA resets before requesting CDR calibration.
+
+properties:
+  compatible:
+    const: samsung,exynos9820-pcie-phy
+  reg:
+    items:
+      - description: PMA registers
+      - description: PCS registers
+  reg-names:
+    items:
+      - const: pma
+      - const: pcs
+  '#phy-cells':
+    const: 0
+  samsung,pmu-syscon:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: PMU containing channel-0 isolation control at offset 0x71c
+  samsung,sysreg:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: FSYS1 SYSREG with controls at offsets 0x1044 and 0x1050
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - '#phy-cells'
+  - samsung,pmu-syscon
+  - samsung,sysreg
+
+additionalProperties: false

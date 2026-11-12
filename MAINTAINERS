@@ -20741,6 +20741,8 @@ L:	linux-pci@vger.kernel.org
 L:	linux-arm-kernel@lists.infradead.org (moderated for non-subscribers)
 L:	linux-samsung-soc@vger.kernel.org
 S:	Maintained
+F:	Documentation/devicetree/bindings/pci/samsung,exynos9820-pcie.yaml
+F:	Documentation/devicetree/bindings/phy/samsung,exynos9820-pcie-phy.yaml
 F:	drivers/pci/controller/dwc/pci-exynos.c
 
 PCI DRIVER FOR STM32MP25

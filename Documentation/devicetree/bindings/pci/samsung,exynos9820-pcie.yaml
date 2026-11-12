@@ -1,0 +1,88 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: http://devicetree.org/schemas/pci/samsung,exynos9820-pcie.yaml#
+$schema: http://devicetree.org/meta-schemas/core.yaml#
+
+title: Samsung Exynos9820 channel-0 PCIe host
+
+maintainers:
+  - Marek Szyprowski <m.szyprowski@samsung.com>
+
+description: |
+  Single-lane DesignWare root port in FSYS1, used for onboard Wi-Fi.
+  The integrated SysMMU is explicitly put in full bypass mode; it is not
+  an IOMMU provider with this binding. Interrupts use the shared INTx line.
+  PHY clocks are owned by the host and held while the port is active.
+
+allOf:
+  - $ref: /schemas/pci/pci-host-bridge.yaml#
+
+properties:
+  compatible:
+    const: samsung,exynos9820-pcie
+  reg:
+    items:
+      - description: ELBI application registers
+      - description: DesignWare DBI registers including viewport iATU
+      - description: Outbound configuration window
+      - description: Channel-0 SysMMU registers for full bypass
+  reg-names:
+    items:
+      - const: elbi
+      - const: dbi
+      - const: config
+      - const: sysmmu
+  interrupts:
+    maxItems: 1
+  interrupt-names:
+    const: intx
+  clocks:
+    maxItems: 8
+    minItems: 8
+  clock-names:
+    items:
+      - const: dbi
+      - const: master
+      - const: slave
+      - const: apb
+      - const: phy-apb
+      - const: pcs-apb
+      - const: ref
+      - const: sysmmu
+  phys:
+    maxItems: 1
+  phy-names:
+    const: pcie
+  samsung,sysreg:
+    $ref: /schemas/types.yaml#/definitions/phandle
+    description: FSYS1 SYSREG, including PCIe AXI shareability controls
+  reset-gpios:
+    maxItems: 1
+    description: Endpoint PERST#, active low
+  vpcie-supply:
+    description: Endpoint power enable, including WLAN_REG_ON startup delay
+  num-lanes:
+    const: 1
+  max-link-speed:
+    const: 1
+
+required:
+  - compatible
+  - reg
+  - reg-names
+  - interrupts
+  - interrupt-names
+  - clocks
+  - clock-names
+  - phys
+  - phy-names
+  - samsung,sysreg
+  - reset-gpios
+  - vpcie-supply
+  - num-lanes
+  - max-link-speed
+  - interrupt-map
+  - interrupt-map-mask
+
+unevaluatedProperties: false
