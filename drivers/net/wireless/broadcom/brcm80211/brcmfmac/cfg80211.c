@@ -6890,6 +6890,8 @@ static void init_vif_event(struct brcmf_cfg80211_vif_event *event)
 	spin_lock_init(&event->vif_event_lock);
 }
 
+#define BRCMF_WNM_BSSTRANS_POLICY_WBTEXT	5
+
 static s32 brcmf_dongle_roam(struct brcmf_if *ifp)
 {
 	struct brcmf_pub *drvr = ifp->drvr;
@@ -6897,17 +6899,7 @@ static s32 brcmf_dongle_roam(struct brcmf_if *ifp)
 	u32 bcn_timeout;
 	__le32 roamtrigger[2];
 	__le32 roam_delta[2];
-
-	/* Configure beacon timeout value based upon roaming setting */
-	if (ifp->drvr->settings->roamoff)
-		bcn_timeout = BRCMF_DEFAULT_BCN_TIMEOUT_ROAM_OFF;
-	else
-		bcn_timeout = BRCMF_DEFAULT_BCN_TIMEOUT_ROAM_ON;
-	err = brcmf_fil_iovar_int_set(ifp, "bcn_timeout", bcn_timeout);
-	if (err) {
-		bphy_err(drvr, "bcn_timeout error (%d)\n", err);
-		goto roam_setup_done;
-	}
+	u32 bsstrans_policy;
 
 	/* Enable/Disable built-in roaming to allow supplicant to take care of
 	 * roaming.
@@ -6920,6 +6912,26 @@ static s32 brcmf_dongle_roam(struct brcmf_if *ifp)
 		bphy_err(drvr, "roam_off error (%d)\n", err);
 		goto roam_setup_done;
 	}
+
+	/* Configure beacon timeout value based upon roaming setting */
+	if (ifp->drvr->settings->roamoff)
+		bcn_timeout = BRCMF_DEFAULT_BCN_TIMEOUT_ROAM_OFF;
+	else
+		bcn_timeout = BRCMF_DEFAULT_BCN_TIMEOUT_ROAM_ON;
+	err = brcmf_fil_iovar_int_set(ifp, "bcn_timeout", bcn_timeout);
+	if (err) {
+		bphy_err(drvr, "bcn_timeout error (%d)\n", err);
+		goto roam_setup_done;
+	}
+
+	/* No trigger tuning is needed when the supplicant handles roaming. */
+	if (drvr->settings->roamoff)
+		return 0;
+
+	/* WBTEXT uses roam profiles instead of the legacy RSSI trigger. */
+	err = brcmf_fil_iovar_int_get(ifp, "wnm_bsstrans_resp", &bsstrans_policy);
+	if (!err && bsstrans_policy == BRCMF_WNM_BSSTRANS_POLICY_WBTEXT)
+		return 0;
 
 	roamtrigger[0] = cpu_to_le32(WL_ROAM_TRIGGER_LEVEL);
 	roamtrigger[1] = cpu_to_le32(BRCM_BAND_ALL);

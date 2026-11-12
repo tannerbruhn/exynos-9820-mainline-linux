@@ -409,6 +409,15 @@ int brcmf_c_preinit_dcmds(struct brcmf_if *ifp)
 		goto done;
 	}
 
+	/* Apply the module policy before the interface can be opened or queried. */
+	if (drvr->settings->roamoff) {
+		err = brcmf_fil_iovar_int_set(ifp, "roam_off", 1);
+		if (err) {
+			bphy_err(drvr, "failed disabling firmware roaming (%d)\n", err);
+			goto done;
+		}
+	}
+
 	brcmf_c_set_joinpref_default(ifp);
 
 	/* Setup event_msgs, enable E_IF */
