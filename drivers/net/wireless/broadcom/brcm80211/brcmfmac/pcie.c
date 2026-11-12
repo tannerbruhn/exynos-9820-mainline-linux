@@ -288,6 +288,10 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_CFGREG_REG_BAR3_CONFIG	0x4F4
 #define BRCMF_PCIE_LINK_STATUS_CTRL_ASPM_ENAB	3
 
+#define BRCMF_PCIE_WD_F0_EN		BIT(28)
+#define BRCMF_PCIE_WD_ALL_FN_EN		BIT(31)
+#define BRCMF_PCIE_WD_ENABLE_MASK		GENMASK(31, 28)
+
 /* Magic number at a magic location to find RAM size */
 #define BRCMF_RAMSIZE_MAGIC			0x534d4152	/* SMAR */
 #define BRCMF_RAMSIZE_OFFSET			0x6c
@@ -695,10 +699,27 @@ static void brcmf_pcie_reset_device(struct brcmf_pciedev_info *devinfo)
 	pci_write_config_dword(devinfo->pdev, BRCMF_PCIE_REG_LINK_STATUS_CTRL,
 			       val);
 
-	/* Watchdog reset */
+	/* ChipCommon rev 65+ needs an explicit subsystem reset selection. */
+	core = brcmf_chip_get_core(devinfo->ci, BCMA_CORE_PCIE2);
 	brcmf_pcie_select_core(devinfo, BCMA_CORE_CHIPCOMMON);
-	WRITECC32(devinfo, watchdog, 4);
-	msleep(100);
+	if (brcmf_chip_get_chipcommon(devinfo->ci)->rev >= 65) {
+		u32 mask = BRCMF_PCIE_WD_F0_EN;
+
+		/* Older PCIe cores require a reset of all functions together. */
+		if (core->rev < 66)
+			mask |= BRCMF_PCIE_WD_ALL_FN_EN;
+		val = READCC32(devinfo, watchdog) & ~BRCMF_PCIE_WD_ENABLE_MASK;
+		WRITECC32(devinfo, watchdog, val | mask);
+		WRITECC32(devinfo, watchdog, mask | 4);
+		pci_read_config_dword(devinfo->pdev, PCI_VENDOR_ID, &val);
+		usleep_range(2000, 2500);
+		val = READCC32(devinfo, intstatus);
+		WRITECC32(devinfo, intstatus, val & BRCMF_PCIE_WD_ENABLE_MASK);
+	} else {
+		WRITECC32(devinfo, watchdog, 4);
+		pci_read_config_dword(devinfo->pdev, PCI_VENDOR_ID, &val);
+		msleep(100);
+	}
 
 	/* Restore ASPM */
 	brcmf_pcie_select_core(devinfo, BCMA_CORE_PCIE2);
@@ -2653,6 +2674,12 @@ brcmf_pcie_remove(struct pci_dev *pdev)
 	if (devinfo->ci)
 		brcmf_pcie_intr_disable(devinfo);
 
+	/* Stop notifications and DMA before detaching protocol buffers. */
+	brcmf_bus_change_state(bus, BRCMF_BUS_DOWN);
+	brcmf_pcie_release_irq(devinfo);
+	brcmf_pcie_reset_device(devinfo);
+	pci_clear_master(pdev);
+
 	brcmf_detach(&pdev->dev);
 	brcmf_free(&pdev->dev);
 
@@ -2661,10 +2688,8 @@ brcmf_pcie_remove(struct pci_dev *pdev)
 	kfree(bus->msgbuf);
 	kfree(bus);
 
-	brcmf_pcie_release_irq(devinfo);
 	brcmf_pcie_release_scratchbuffers(devinfo);
 	brcmf_pcie_release_ringbuffers(devinfo);
-	brcmf_pcie_reset_device(devinfo);
 	brcmf_pcie_release_resource(devinfo);
 	release_firmware(devinfo->clm_fw);
 	release_firmware(devinfo->txcap_fw);
