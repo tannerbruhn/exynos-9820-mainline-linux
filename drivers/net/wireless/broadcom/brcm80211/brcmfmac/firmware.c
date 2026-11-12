@@ -9,6 +9,7 @@
 #include <linux/device.h>
 #include <linux/firmware.h>
 #include <linux/module.h>
+#include <linux/workqueue.h>
 #include <linux/bcm47xx_nvram.h>
 
 #include "debug.h"
@@ -454,6 +455,7 @@ void brcmf_fw_nvram_free(void *nvram)
 }
 
 struct brcmf_fw {
+	struct work_struct work;
 	struct device *dev;
 	struct brcmf_fw_request *req;
 	u32 curpos;
@@ -663,13 +665,18 @@ static int brcmf_fw_request_firmware(const struct firmware **fw,
 		if (!alt_path)
 			goto fallback;
 
-		ret = firmware_request_nowarn(fw, alt_path, fwctx->dev);
+		if (fwctx->req->direct)
+			ret = request_firmware_direct(fw, alt_path, fwctx->dev);
+		else
+			ret = firmware_request_nowarn(fw, alt_path, fwctx->dev);
 		kfree(alt_path);
 		if (ret == 0)
 			return ret;
 	}
 
 fallback:
+	if (fwctx->req->direct)
+		return request_firmware_direct(fw, cur->path, fwctx->dev);
 	if (cur->flags & BRCMF_FW_REQF_OPTIONAL)
 		return firmware_request_nowarn(fw, cur->path, fwctx->dev);
 
@@ -694,6 +701,19 @@ static void brcmf_fw_request_done(const struct firmware *fw, void *ctx)
 	}
 	fwctx->done(fwctx->dev, ret, fwctx->req);
 	kfree(fwctx);
+}
+
+/* Keep direct file lookup asynchronous, like the normal firmware API path. */
+static void brcmf_fw_request_worker(struct work_struct *work)
+{
+	struct brcmf_fw *fwctx = container_of(work, struct brcmf_fw, work);
+	const struct firmware *fw = NULL;
+	struct device *dev = fwctx->dev;
+
+	brcmf_fw_request_firmware(&fw, fwctx);
+	brcmf_fw_request_done(fw, fwctx);
+	put_device(dev);
+	module_put(THIS_MODULE);
 }
 
 static void brcmf_fw_request_done_alt_path(const struct firmware *fw, void *ctx)
@@ -776,6 +796,17 @@ int brcmf_fw_get_firmwares(struct device *dev, struct brcmf_fw_request *req,
 	fwctx->dev = dev;
 	fwctx->req = req;
 	fwctx->done = fw_cb;
+
+	if (req->direct) {
+		if (!try_module_get(THIS_MODULE)) {
+			kfree(fwctx);
+			return -ENODEV;
+		}
+		get_device(dev);
+		INIT_WORK(&fwctx->work, brcmf_fw_request_worker);
+		queue_work(system_long_wq, &fwctx->work);
+		return 0;
+	}
 
 	/* First try alternative board-specific path if any */
 	if (fwctx->req->board_types[0])

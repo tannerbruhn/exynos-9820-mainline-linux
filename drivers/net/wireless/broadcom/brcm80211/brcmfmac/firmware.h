@@ -65,6 +65,8 @@ struct brcmf_fw_item {
 };
 
 struct brcmf_fw_request {
+	/* Load from disk without waiting for the userspace fallback helper. */
+	bool direct;
 	u16 domain_nr;
 	u16 bus_nr;
 	u32 n_items;
