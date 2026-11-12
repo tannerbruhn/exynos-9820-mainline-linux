@@ -8,6 +8,12 @@ Until now the port had no Wi-Fi.
 > **This code was written by AI** and tested on real hardware by a human: one SM-G973F, on one
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
+> **⚠️ Known issue in v1 — do not use for heavy downloads to disk.**
+> Under sustained Wi-Fi receive combined with heavy disk I/O (for example downloading
+> multi-GB files to storage), this build can corrupt memory: downloaded files may be
+> damaged and processes may crash. Wi-Fi-only or disk-only load tested clean. The cause
+> is being tracked down in the Wi-Fi receive path; a fixed release will follow.
+
 ## What works
 
 | | Status |
