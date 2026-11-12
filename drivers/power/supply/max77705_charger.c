@@ -366,12 +366,33 @@ static int max77705_set_float_voltage(struct max77705_charger_data *chg,
 	unsigned int reg_data = 0;
 
 	float_voltage_mv = float_voltage / 1000;
-	reg_data = float_voltage_mv <= 4000 ? 0x0 :
-		float_voltage_mv >= 4500 ? 0x23 :
-		(float_voltage_mv <= 4200) ? (float_voltage_mv - 4000) / 50 :
-		(((float_voltage_mv - 4200) / 10) + 0x04);
+	if (float_voltage_mv < 3900)
+		reg_data = MAX77705_CHG_CV_PRM_3800MV;
+	else if (float_voltage_mv < 4000)
+		reg_data = MAX77705_CHG_CV_PRM_3900MV;
+	else
+		reg_data = float_voltage_mv >= 4500 ? 0x23 :
+			(float_voltage_mv <= 4200) ? (float_voltage_mv - 4000) / 50 :
+			(((float_voltage_mv - 4200) / 10) + 0x04);
 
 	return regmap_field_write(chg->rfield[MAX77705_CHG_CV_PRM], reg_data);
+}
+
+/*
+ * Lowering the charge voltage below the battery's design maximum is the usual
+ * way to keep a permanently plugged-in device from sitting at 100% state of
+ * charge. Never allow anything above the design maximum.
+ */
+static int max77705_set_float_voltage_limited(struct max77705_charger_data *chg,
+					      int float_voltage)
+{
+	int max_uv = chg->bat_info->voltage_max_design_uv > 0 ?
+		     chg->bat_info->voltage_max_design_uv : 4200000;
+
+	if (float_voltage < 3800000 || float_voltage > max_uv)
+		return -EINVAL;
+
+	return max77705_set_float_voltage(chg, float_voltage);
 }
 
 static int max77705_get_float_voltage(struct max77705_charger_data *chg,
@@ -381,8 +402,13 @@ static int max77705_get_float_voltage(struct max77705_charger_data *chg,
 	int voltage_mv;
 
 	regmap_field_read(chg->rfield[MAX77705_CHG_CV_PRM], &reg_data);
-	voltage_mv = reg_data <= 0x04 ? reg_data * 50 + 4000 :
-					(reg_data - 4) * 10 + 4200;
+	if (reg_data == MAX77705_CHG_CV_PRM_3800MV)
+		voltage_mv = 3800;
+	else if (reg_data == MAX77705_CHG_CV_PRM_3900MV)
+		voltage_mv = 3900;
+	else
+		voltage_mv = reg_data <= 0x04 ? reg_data * 50 + 4000 :
+						(reg_data - 4) * 10 + 4200;
 	*val = voltage_mv * 1000;
 
 	return 0;
@@ -449,6 +475,9 @@ static int max77705_set_property(struct power_supply *psy,
 					   MAX77705_CURRENT_CHGIN_STEP,
 					   val->intval);
 		break;
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
+		err = max77705_set_float_voltage_limited(chg, val->intval);
+		break;
 	default:
 		err = -EINVAL;
 	}
@@ -462,6 +491,7 @@ static int max77705_property_is_writeable(struct power_supply *psy,
 	switch (psp) {
 	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT:
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT:
+	case POWER_SUPPLY_PROP_CONSTANT_CHARGE_VOLTAGE:
 		return true;
 	default:
 		return false;
