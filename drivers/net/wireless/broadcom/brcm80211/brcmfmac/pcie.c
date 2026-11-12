@@ -66,6 +66,7 @@ BRCMF_FW_DEF(4365C, "brcmfmac4365c-pcie");
 BRCMF_FW_DEF(4366B, "brcmfmac4366b-pcie");
 BRCMF_FW_DEF(4366C, "brcmfmac4366c-pcie");
 BRCMF_FW_DEF(4371, "brcmfmac4371-pcie");
+BRCMF_FW_CLM_DEF(4375, "brcmfmac4375-pcie");
 BRCMF_FW_CLM_DEF(43752, "brcmfmac43752-pcie");
 BRCMF_FW_CLM_DEF(4377B3, "brcmfmac4377b3-pcie");
 BRCMF_FW_CLM_DEF(4378B1, "brcmfmac4378b1-pcie");
@@ -107,6 +108,7 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 	BRCMF_FW_ENTRY(BRCM_CC_43664_CHIP_ID, 0xFFFFFFF0, 4366C),
 	BRCMF_FW_ENTRY(BRCM_CC_43666_CHIP_ID, 0xFFFFFFF0, 4366C),
 	BRCMF_FW_ENTRY(BRCM_CC_4371_CHIP_ID, 0xFFFFFFFF, 4371),
+	BRCMF_FW_ENTRY(BRCM_CC_4375_CHIP_ID, 0xFFFFFFFF, 4375),
 	BRCMF_FW_ENTRY(BRCM_CC_43752_CHIP_ID, 0xFFFFFFFF, 43752),
 	BRCMF_FW_ENTRY(BRCM_CC_4377_CHIP_ID, 0xFFFFFFFF, 4377B3), /* revision ID 4 */
 	BRCMF_FW_ENTRY(BRCM_CC_4378_CHIP_ID, 0x0000000F, 4378B1), /* revision ID 3 */
@@ -983,7 +985,11 @@ static int brcmf_pcie_request_irq(struct brcmf_pciedev_info *devinfo)
 
 	brcmf_dbg(PCIE, "Enter\n");
 
-	pci_enable_msi(pdev);
+	/* Vendor BCM4375 firmware requires legacy mailbox interrupts. */
+	if (devinfo->ci->chip != BRCM_CC_4375_CHIP_ID)
+		pci_enable_msi(pdev);
+	else
+		pci_intx(pdev, 1);
 	if (request_threaded_irq(pdev->irq, brcmf_pcie_quick_check_isr,
 				 brcmf_pcie_isr_thread, IRQF_SHARED,
 				 "brcmf_pcie_intr", devinfo)) {
@@ -1703,14 +1709,16 @@ struct brcmf_random_seed_footer {
 
 #define BRCMF_RANDOM_SEED_MAGIC		0xfeedc0de
 #define BRCMF_RANDOM_SEED_LENGTH	0x100
+#define BRCMF_4375_RANDOM_SEED_LENGTH	0x80
 
 static noinline_for_stack void
-brcmf_pcie_provide_random_bytes(struct brcmf_pciedev_info *devinfo, u32 address)
+brcmf_pcie_provide_random_bytes(struct brcmf_pciedev_info *devinfo, u32 address,
+				u32 length)
 {
 	u8 randbuf[BRCMF_RANDOM_SEED_LENGTH];
 
-	get_random_bytes(randbuf, BRCMF_RANDOM_SEED_LENGTH);
-	memcpy_toio(devinfo->tcm + address, randbuf, BRCMF_RANDOM_SEED_LENGTH);
+	get_random_bytes(randbuf, length);
+	memcpy_toio(devinfo->tcm + address, randbuf, length);
 }
 
 static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
@@ -1724,6 +1732,24 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 	int err;
 	u32 address;
 	u32 resetintr;
+	bool bcm4375 = devinfo->ci->chip == BRCM_CC_4375_CHIP_ID;
+
+	/* Do not let a bad RAM size or a large image overwrite NVRAM/entropy. */
+	if (bcm4375) {
+		u64 reserve = (u64)nvram_len + sizeof(struct brcmf_random_seed_footer) +
+			      BRCMF_4375_RANDOM_SEED_LENGTH;
+
+		if (!nvram || nvram_len < 4 || fw->size < 4 ||
+		    reserve > devinfo->ci->ramsize ||
+		    fw->size > devinfo->ci->ramsize - reserve ||
+		    (u64)devinfo->ci->rambase + devinfo->ci->ramsize >
+		    pci_resource_len(devinfo->pdev, 2)) {
+			brcmf_err(bus, "BCM4375 invalid download layout or missing NVRAM\n");
+			release_firmware(fw);
+			brcmf_fw_nvram_free(nvram);
+			return -EINVAL;
+		}
+	}
 
 	brcmf_dbg(PCIE, "Halt ARM.\n");
 	err = brcmf_pcie_enter_download_state(devinfo);
@@ -1749,8 +1775,9 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 		memcpy_toio(devinfo->tcm + address, nvram, nvram_len);
 		brcmf_fw_nvram_free(nvram);
 
-		if (devinfo->fwseed) {
-			size_t rand_len = BRCMF_RANDOM_SEED_LENGTH;
+		if (devinfo->fwseed || bcm4375) {
+			size_t rand_len = bcm4375 ? BRCMF_4375_RANDOM_SEED_LENGTH :
+					 BRCMF_RANDOM_SEED_LENGTH;
 			struct brcmf_random_seed_footer footer = {
 				.length = cpu_to_le32(rand_len),
 				.magic = cpu_to_le32(BRCMF_RANDOM_SEED_MAGIC),
@@ -1766,7 +1793,7 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 				    sizeof(footer));
 
 			address -= rand_len;
-			brcmf_pcie_provide_random_bytes(devinfo, address);
+			brcmf_pcie_provide_random_bytes(devinfo, address, rand_len);
 		}
 	} else {
 		brcmf_dbg(PCIE, "No matching NVRAM file found %s\n",
@@ -2279,6 +2306,7 @@ brcmf_pcie_prepare_fw_request(struct brcmf_pciedev_info *devinfo)
 	if (!fwreq)
 		return NULL;
 
+	fwreq->direct = devinfo->ci->chip == BRCM_CC_4375_CHIP_ID;
 	fwreq->items[BRCMF_PCIE_FW_CODE].type = BRCMF_FW_TYPE_BINARY;
 	fwreq->items[BRCMF_PCIE_FW_NVRAM].type = BRCMF_FW_TYPE_NVRAM;
 	fwreq->items[BRCMF_PCIE_FW_NVRAM].flags = BRCMF_FW_REQF_OPTIONAL;
@@ -2778,6 +2806,7 @@ static const struct pci_device_id brcmf_pcie_devid_table[] = {
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4366_5G_DEVICE_ID, BCA),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4371_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_43596_DEVICE_ID, CYW),
+	BRCMF_PCIE_DEVICE(BRCM_PCIE_4375_DEVICE_ID, WCC),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4377_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4378_DEVICE_ID, WCC_SEED),
 	BRCMF_PCIE_DEVICE(BRCM_PCIE_4387_DEVICE_ID, WCC_SEED),
