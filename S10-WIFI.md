@@ -8,18 +8,17 @@ Until now the port had no Wi-Fi.
 > **This code was written by AI** and tested on real hardware by a human: one SM-G973F, on one
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
-> **⚠️ Known issue (affects the stock port kernel too): zram swap crashes this kernel.**
-> On the 7.2.0-rc2 kernel used by this port, the zram swap that Nura enables by default
-> (`postmarketos-zram-swap`, with `vm.swappiness=180`) oopses in `zs_malloc` under memory
-> pressure — e.g. large downloads filling the page cache, or running an LLM. Symptoms: random
-> process crashes, corrupted files, then a hard hang. Reproduced on the stock pmOS kernel as
-> well, so it is not caused by the Wi-Fi changes. Fix — disable zram swap:
-> ```sh
-> sudo swapoff -a
-> sudo systemctl mask postmarketos-zram-swap.service dev-zram0.swap
-> ```
-> With zram disabled, the same workload ran clean. (An earlier version of this note blamed the
-> Wi-Fi receive path; that was wrong.)
+> **⚠️ v1 users: update to v2.** The port's device tree let Linux use 39 MB of RAM
+> (`0xfd900000-0xffffffff`) that the bootloader's debug logger keeps writing to after boot.
+> Under memory pressure (large downloads, an LLM, zram swap) the kernel puts data there and it
+> gets overwritten: corrupted files, random process crashes, kernel oopses, hangs. The stock
+> port kernel gets the same device tree from U-Boot, so it is affected too. v2's U-Boot reserves
+> that region, the way Samsung's own device tree does.
+>
+> v1's notes blamed zram swap, and before that the Wi-Fi driver. Both were wrong: zram crashed
+> only because it uses memory under pressure. The workaround of disabling zram reduces the
+> chance of a crash but does not fix it; v2 does. (Re-enabling zram on v2 has not been tested
+> yet.)
 
 ## What works
 
@@ -36,7 +35,7 @@ Until now the port had no Wi-Fi.
 
 ## What changed
 
-Kernel, branch [`s10-wifi`](../../tree/s10-wifi) (8 code commits on top of the port's `62fdd500d8ca`, plus this file):
+Kernel, branch [`s10-wifi`](../../tree/s10-wifi) (9 code commits on top of the port's `62fdd500d8ca`, plus this file):
 
 - **New PCIe host driver** `pcie-exynos9820` for the Wi-Fi root port, with INTx demultiplexing.
   The SoC's SysMMU is left in bypass.
@@ -49,10 +48,14 @@ Kernel, branch [`s10-wifi`](../../tree/s10-wifi) (8 code commits on top of the p
   - D2H sync checks
   - a watchdog reset fix so the driver can be reloaded
   - the `roamoff` parameter applied early
+- **max77705 charger (v2):** the charge voltage is writable, so you can cap it for a phone that
+  stays plugged in (see "Battery: charge limit" below).
 
 U-Boot (this port boots through U-Boot, which supplies the device tree), branch
 [`s10-wifi`](https://github.com/tannerbruhn/u-boot/tree/s10-wifi): adds the Wi-Fi nodes for the
 PCIe controller, PHY, power-enable regulator (GPG0-5), PERST/CLKREQ, and the host-wake pin.
+**v2** also reserves the bootloader's debug-snapshot memory (`0xfd900000`, 39 MB), which fixes
+the memory corruption described at the top.
 
 ## Requirements
 
@@ -96,6 +99,21 @@ PCIe controller, PHY, power-enable regulator (GPG0-5), PERST/CLKREQ, and the hos
 To undo: `sudo ./s10-wifi-install.sh --uninstall`. The U-Boot with the extra device-tree nodes
 is harmless for the stock kernel. To restore the old boot partition exactly:
 `sudo dd if=/root/boot-partition-backup-*.img of=/dev/disk/by-partlabel/boot bs=1M`.
+
+## Battery: charge limit (optional, v2)
+
+A phone that is always plugged in ages its battery fastest at 100%. With v2 you can cap the
+charge voltage; 4.10 V keeps the battery around 75-80%. Create
+`/etc/udev/rules.d/90-s10-charge-limit.rules` containing:
+
+```
+ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="max77705-charger", ATTR{constant_charge_voltage}="4100000", ATTR{constant_charge_current}="1000000"
+```
+
+then apply it with `sudo udevadm trigger -c change /sys/class/power_supply/max77705-charger`.
+This also caps the charge current at 1 A to limit heat. The battery temperature sensor is not
+supported on this port (it reads a fixed 37.3 °C), so the kernel cannot see a hot battery.
+Keep an always-on phone somewhere it can shed heat.
 
 ## Known issues
 
