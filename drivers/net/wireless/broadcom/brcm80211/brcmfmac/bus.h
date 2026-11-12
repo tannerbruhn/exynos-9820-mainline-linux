@@ -116,6 +116,7 @@ struct brcmf_bus_ops {
  * @commonrings: commonrings which are always there.
  * @flowrings: commonrings which are dynamically created and destroyed for data.
  * @rx_dataoffset: if set then all rx data has this offset.
+ * @d2h_sync_mode: completion DMA synchronization flags.
  * @max_rxbufpost: maximum number of buffers to post for rx.
  * @max_flowrings: maximum number of tx flow rings supported.
  * @max_submissionrings: maximum number of submission rings(h2d) supported.
@@ -125,6 +126,7 @@ struct brcmf_bus_msgbuf {
 	struct brcmf_commonring *commonrings[BRCMF_NROF_COMMON_MSGRINGS];
 	struct brcmf_commonring **flowrings;
 	u32 rx_dataoffset;
+	u32 d2h_sync_mode;
 	u32 max_rxbufpost;
 	u16 max_flowrings;
 	u16 max_submissionrings;

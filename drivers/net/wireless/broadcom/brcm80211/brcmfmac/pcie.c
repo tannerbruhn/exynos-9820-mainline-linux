@@ -224,6 +224,10 @@ static const struct brcmf_firmware_mapping brcmf_pcie_fwnames[] = {
 #define BRCMF_PCIE_FLAGS_HTOD_SPLIT		0x4000
 #define BRCMF_PCIE_FLAGS_DTOH_SPLIT		0x8000
 
+#define BRCMF_SHARED_HOST_CAP_OFFSET		84
+#define BRCMF_HOST_CAP_HOSTRDY			0x00000400
+#define BRCMF_HOST_CAP_NO_OOB_DW			0x00001000
+
 #define BRCMF_SHARED_MAX_RXBUFPOST_OFFSET	34
 #define BRCMF_SHARED_RING_BASE_OFFSET		52
 #define BRCMF_SHARED_RX_DATAOFFSET_OFFSET	36
@@ -526,8 +530,11 @@ static u16
 brcmf_pcie_read_idx(struct brcmf_pciedev_info *devinfo, u32 mem_offset)
 {
 	u16 *address = devinfo->idxbuf + mem_offset;
+	u16 value = READ_ONCE(*address);
 
-	return (*(address));
+	/* Observe firmware's producer index before reading completion payloads. */
+	dma_rmb();
+	return value;
 }
 
 
@@ -537,7 +544,9 @@ brcmf_pcie_write_idx(struct brcmf_pciedev_info *devinfo, u32 mem_offset,
 {
 	u16 *address = devinfo->idxbuf + mem_offset;
 
-	*(address) = value;
+	/* Publish descriptors before firmware observes the updated index. */
+	dma_wmb();
+	WRITE_ONCE(*address, value);
 }
 
 
@@ -1418,6 +1427,10 @@ static int brcmf_pcie_init_scratchbuffers(struct brcmf_pciedev_info *devinfo)
 	       BRCMF_SHARED_DMA_SCRATCH_LEN_OFFSET;
 	brcmf_pcie_write_tcm32(devinfo, addr, BRCMF_DMA_D2H_SCRATCH_BUF_LEN);
 
+	/* The vendor rev6+ ABI uses offsets 64..75 for host SCB offload. */
+	if (devinfo->shared.version >= 6)
+		return 0;
+
 	devinfo->shared.ringupd =
 		dma_alloc_coherent(&devinfo->pdev->dev,
 				   BRCMF_DMA_D2H_RINGUPD_BUF_LEN,
@@ -1621,6 +1634,7 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 	struct brcmf_bus *bus = dev_get_drvdata(&devinfo->pdev->dev);
 	struct brcmf_pcie_shared_info *shared;
 	u32 addr;
+	u32 host_cap;
 
 	shared = &devinfo->shared;
 	shared->tcm_base_address = sharedram_addr;
@@ -1633,6 +1647,19 @@ brcmf_pcie_init_share_ram_info(struct brcmf_pciedev_info *devinfo,
 		brcmf_err(bus, "Unsupported PCIE version %d\n",
 			  shared->version);
 		return -EINVAL;
+	}
+
+	if (shared->version >= 6) {
+		/*
+		 * Negotiate only implemented features, before HOSTRDY/ring traffic.
+		 * In particular, leave phase validation, IDMA, IFRM, DAR and
+		 * host SCB offload disabled. PCIe does not use OOB device wake.
+		 */
+		host_cap = shared->version | BRCMF_HOST_CAP_NO_OOB_DW;
+		if (shared->flags & BRCMF_PCIE_SHARED_HOSTRDY_DB1)
+			host_cap |= BRCMF_HOST_CAP_HOSTRDY;
+		addr = sharedram_addr + BRCMF_SHARED_HOST_CAP_OFFSET;
+		brcmf_pcie_write_tcm32(devinfo, addr, host_cap);
 	}
 
 	/* check firmware support dma indicies */
@@ -1757,14 +1784,16 @@ static int brcmf_pcie_download_fw_nvram(struct brcmf_pciedev_info *devinfo,
 	brcmf_dbg(PCIE, "Wait for FW init\n");
 	sharedram_addr = sharedram_addr_written;
 	loop_counter = BRCMF_PCIE_FW_UP_TIMEOUT / 50;
-	while ((sharedram_addr == sharedram_addr_written) && (loop_counter)) {
+	while ((sharedram_addr == sharedram_addr_written ||
+		!sharedram_addr) && loop_counter) {
 		msleep(50);
 		sharedram_addr = brcmf_pcie_read_ram32(devinfo,
 						       devinfo->ci->ramsize -
 						       4);
 		loop_counter--;
 	}
-	if (sharedram_addr == sharedram_addr_written) {
+	if (sharedram_addr == sharedram_addr_written ||
+	    !sharedram_addr) {
 		brcmf_err(bus, "FW failed to initialize\n");
 		return -ENODEV;
 	}
@@ -2207,6 +2236,8 @@ static void brcmf_pcie_setup(struct device *dev, int ret,
 		flowrings[i] = &devinfo->shared.flowrings[i].commonring;
 	bus->msgbuf->flowrings = flowrings;
 
+	bus->msgbuf->d2h_sync_mode = devinfo->shared.flags &
+		(BRCMF_MSGBUF_D2H_SYNC_SEQNUM | BRCMF_MSGBUF_D2H_SYNC_XOR);
 	bus->msgbuf->rx_dataoffset = devinfo->shared.rx_dataoffset;
 	bus->msgbuf->max_rxbufpost = devinfo->shared.max_rxbufpost;
 	bus->msgbuf->max_flowrings = devinfo->shared.max_flowrings;

@@ -11,6 +11,7 @@
 #include <linux/types.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/delay.h>
 
 #include <brcmu_utils.h>
 #include <brcmu_wifi.h>
@@ -23,6 +24,7 @@
 #include "flowring.h"
 #include "bus.h"
 #include "tracepoint.h"
+#include "fwil.h"
 
 
 #define MSGBUF_IOCTL_RESP_TIMEOUT		msecs_to_jiffies(2000)
@@ -241,6 +243,9 @@ struct brcmf_msgbuf {
 	u32 max_rxbufpost;
 	u16 rx_metadata_offset;
 	u32 rxbufpost;
+	u32 rxbuf_size;
+	u32 d2h_sync_mode;
+	u8 d2h_seqnum[BRCMF_NROF_D2H_COMMON_MSGRINGS];
 
 	u32 max_ioctlrespbuf;
 	u32 cur_ioctlrespbuf;
@@ -927,7 +932,7 @@ static u32 brcmf_msgbuf_rxbuf_data_post(struct brcmf_msgbuf *msgbuf, u32 count)
 		rx_bufpost = (struct msgbuf_rx_bufpost *)ret_ptr;
 		memset(rx_bufpost, 0, sizeof(*rx_bufpost));
 
-		skb = brcmu_pkt_buf_get_skb(BRCMF_MSGBUF_MAX_PKT_SIZE);
+		skb = brcmu_pkt_buf_get_skb(msgbuf->rxbuf_size);
 
 		if (skb == NULL) {
 			bphy_err(drvr, "Failed to alloc SKB\n");
@@ -1168,11 +1173,16 @@ brcmf_msgbuf_process_rx_complete(struct brcmf_msgbuf *msgbuf, void *buf)
 	if (!skb)
 		return;
 
-	if (data_offset)
-		skb_pull(skb, data_offset);
-	else if (msgbuf->rx_dataoffset)
-		skb_pull(skb, msgbuf->rx_dataoffset);
-
+	if (!data_offset)
+		data_offset = msgbuf->rx_dataoffset;
+	if (data_offset > skb->len || buflen > skb->len - data_offset) {
+		if (net_ratelimit())
+			bphy_err(drvr, "Invalid RX length %u offset %u buffer %u\n",
+				 buflen, data_offset, skb->len);
+		brcmu_pkt_buf_free_skb(skb);
+		return;
+	}
+	skb_pull(skb, data_offset);
 	skb_trim(skb, buflen);
 
 	if ((flags & BRCMF_MSGBUF_PKT_FLAGS_FRAME_MASK) ==
@@ -1334,12 +1344,59 @@ static void brcmf_msgbuf_process_msgtype(struct brcmf_msgbuf *msgbuf, void *buf)
 }
 
 
+/*
+ * TCM indices may become visible before the completion DMA payload.
+ * Coherent memory needs ordering, but must not be streaming-DMA synced.
+ */
+static bool brcmf_msgbuf_d2h_ready(struct brcmf_msgbuf *msgbuf, void *buf,
+				   struct brcmf_commonring *ring, u8 *seqnum)
+{
+	struct msgbuf_common_hdr *hdr = buf;
+	__le32 *words = buf;
+	u32 checksum;
+	int retry, i;
+	bool ready;
+
+	if (!msgbuf->d2h_sync_mode)
+		return true;
+
+	for (retry = 0; retry < 100; retry++) {
+		if (msgbuf->d2h_sync_mode & BRCMF_MSGBUF_D2H_SYNC_SEQNUM) {
+			ready = le32_to_cpu(READ_ONCE(words[ring->item_len / 4 - 1])) ==
+				*seqnum;
+		} else {
+			checksum = 0;
+			for (i = 0; i < ring->item_len / 4; i++)
+				checksum ^= le32_to_cpu(READ_ONCE(words[i]));
+			ready = READ_ONCE(hdr->rsvd0) == *seqnum && !checksum;
+		}
+		if (ready) {
+			dma_rmb();
+			*seqnum = (*seqnum + 1) % 253;
+			return true;
+		}
+		usleep_range(50, 100);
+	}
+	if (net_ratelimit())
+		bphy_err(msgbuf->drvr, "D2H sync pending: mode=%#x expected=%u item-size=%u\n",
+			 msgbuf->d2h_sync_mode, *seqnum, ring->item_len);
+	return false;
+}
+
 static void brcmf_msgbuf_process_rx(struct brcmf_msgbuf *msgbuf,
 				    struct brcmf_commonring *commonring)
 {
 	void *buf;
 	u16 count;
 	u16 processed;
+	u8 *seqnum = NULL;
+	int i;
+
+	for (i = 0; i < BRCMF_NROF_D2H_COMMON_MSGRINGS; i++)
+		if (commonring == msgbuf->commonrings[i + BRCMF_NROF_H2D_COMMON_MSGRINGS])
+			seqnum = &msgbuf->d2h_seqnum[i];
+	if (!seqnum)
+		return;
 
 again:
 	buf = brcmf_commonring_get_read_ptr(commonring, &count);
@@ -1348,6 +1405,8 @@ again:
 
 	processed = 0;
 	while (count) {
+		if (!brcmf_msgbuf_d2h_ready(msgbuf, buf, commonring, seqnum))
+			break;
 		brcmf_msgbuf_process_msgtype(msgbuf,
 					     buf + msgbuf->rx_dataoffset);
 		buf += brcmf_commonring_len_item(commonring);
@@ -1361,7 +1420,7 @@ again:
 	if (processed)
 		brcmf_commonring_read_complete(commonring, processed);
 
-	if (commonring->r_ptr == 0)
+	if (!count && commonring->r_ptr == 0)
 		goto again;
 }
 
@@ -1524,6 +1583,25 @@ static void brcmf_msgbuf_debugfs_create(struct brcmf_pub *drvr)
 	brcmf_debugfs_add_entry(drvr, "msgbuf_stats", brcmf_msgbuf_stats_read);
 }
 
+static int brcmf_msgbuf_init_done(struct brcmf_pub *drvr)
+{
+	struct brcmf_msgbuf *msgbuf = drvr->proto->pd;
+	struct brcmf_if *ifp = brcmf_get_ifp(drvr, 0);
+	u32 size = 0;
+	int err;
+
+	err = brcmf_fil_iovar_int_get(ifp, "rxbufpost_sz", &size);
+	if (!err && size >= ETH_FRAME_LEN + msgbuf->rx_dataoffset && size <= 4096)
+		msgbuf->rxbuf_size = size;
+	brcmf_msgbuf_rxbuf_data_fill(msgbuf);
+	if (msgbuf->rxbufpost != msgbuf->max_rxbufpost) {
+		bphy_err(drvr, "RX initial fill short: %u/%u\n",
+			 msgbuf->rxbufpost, msgbuf->max_rxbufpost);
+		return -ENOMEM;
+	}
+	return 0;
+}
+
 int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 {
 	struct brcmf_bus_msgbuf *if_msgbuf;
@@ -1580,6 +1658,7 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 	drvr->proto->rxreorder = brcmf_msgbuf_rxreorder;
 	drvr->proto->debugfs_create = brcmf_msgbuf_debugfs_create;
 	drvr->proto->pd = msgbuf;
+	drvr->proto->init_done = brcmf_msgbuf_init_done;
 
 	init_waitqueue_head(&msgbuf->ioctl_resp_wait);
 
@@ -1595,6 +1674,12 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 
 	msgbuf->rx_dataoffset = if_msgbuf->rx_dataoffset;
 	msgbuf->max_rxbufpost = if_msgbuf->max_rxbufpost;
+	msgbuf->rxbuf_size = BRCMF_MSGBUF_MAX_PKT_SIZE;
+	msgbuf->d2h_sync_mode = if_msgbuf->d2h_sync_mode;
+	memset(msgbuf->d2h_seqnum, 1, sizeof(msgbuf->d2h_seqnum));
+	msgbuf->max_rxbufpost = min_t(u32, msgbuf->max_rxbufpost,
+				      NR_RX_PKTIDS - BRCMF_MSGBUF_MAX_EVENTBUF_POST -
+				      BRCMF_MSGBUF_MAX_IOCTLRESPBUF_POST);
 
 	msgbuf->max_ioctlrespbuf = BRCMF_MSGBUF_MAX_IOCTLRESPBUF_POST;
 	msgbuf->max_eventbuf = BRCMF_MSGBUF_MAX_EVENTBUF_POST;
@@ -1613,19 +1698,10 @@ int brcmf_proto_msgbuf_attach(struct brcmf_pub *drvr)
 	if (!msgbuf->flow)
 		goto fail;
 
-
 	brcmf_dbg(MSGBUF, "Feeding buffers, rx data %d, rx event %d, rx ioctl resp %d\n",
 		  msgbuf->max_rxbufpost, msgbuf->max_eventbuf,
 		  msgbuf->max_ioctlrespbuf);
-	count = 0;
-	do {
-		brcmf_msgbuf_rxbuf_data_fill(msgbuf);
-		if (msgbuf->max_rxbufpost != msgbuf->rxbufpost)
-			msleep(10);
-		else
-			break;
-		count++;
-	} while (count < 10);
+
 	brcmf_msgbuf_rxbuf_event_post(msgbuf);
 	brcmf_msgbuf_rxbuf_ioctlresp_post(msgbuf);
 

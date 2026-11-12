@@ -23,6 +23,9 @@
 #define BRCMF_D2H_MSGRING_RX_COMPLETE_ITEMSIZE		40
 #define BRCMF_H2D_TXFLOWRING_ITEMSIZE			48
 
+#define BRCMF_MSGBUF_D2H_SYNC_SEQNUM	0x20000
+#define BRCMF_MSGBUF_D2H_SYNC_XOR		0x40000
+
 struct msgbuf_buf_addr {
 	__le32		low_addr;
 	__le32		high_addr;
