@@ -8,11 +8,23 @@ Until now the port had no Wi-Fi.
 > **This code was written by AI** and tested on real hardware by a human: one SM-G973F, on one
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
-This fork is general Galaxy S10 support, on its `main` branch: Wi-Fi, the MAX77705 charger, and (new on `main`, not
-yet in a release) the Mali-G76 GPU through Panfrost, which needs the device tree from
-[tannerbruhn/u-boot](https://github.com/tannerbruhn/u-boot). Running LLMs on the phone:
-[tannerbruhn/s10-llm-recipes](https://github.com/tannerbruhn/s10-llm-recipes). Updates:
-[@t24_lab on X](https://x.com/t24_lab).
+This fork is general Galaxy S10 support on its `main` branch. The Mali-G76 GPU (Panfrost) is new on `main` and not
+yet in a release; it needs the device tree from the U-Boot fork.
+
+## The S10 project
+
+These four repos turn an old Samsung Galaxy S10 (SM-G973F, Exynos 9820) into a small always-on LLM server under
+postmarketOS. The kernel and U-Boot forks are general S10 support; the other two are the LLM side.
+
+- [exynos-9820-mainline-linux](https://github.com/tannerbruhn/exynos-9820-mainline-linux): kernel (Wi-Fi, charger,
+  Mali-G76 GPU through Panfrost)
+- [u-boot](https://github.com/tannerbruhn/u-boot): bootloader and device tree (Wi-Fi, reserved memory, GPU node and
+  clocks)
+- [llama.cpp-s10](https://github.com/tannerbruhn/llama.cpp-s10): inference (ternary CPU kernels, Mali GPU assist)
+- [s10-llm-recipes](https://github.com/tannerbruhn/s10-llm-recipes): models, quantization, server setup, measured
+  numbers
+
+Updates: [@t24_lab on X](https://x.com/t24_lab)
 
 > **⚠️ v1 users: update to v2.** The port's device tree let Linux use 39 MB of RAM
 > (`0xfd900000-0xffffffff`) that the bootloader's debug logger keeps writing to after boot.
