@@ -1,4 +1,4 @@
-# Wi-Fi for the Galaxy S10 on mainline Linux
+# Galaxy S10 on mainline Linux: Wi-Fi, charger, GPU, watchdog
 
 Working Wi-Fi for the **Samsung Galaxy S10 (SM-G973F, `beyond1lte`, Exynos 9820)** on the
 mainline Linux port that postmarketOS / Nura uses
@@ -8,8 +8,9 @@ Until now the port had no Wi-Fi.
 > **This code was written by AI** and tested on real hardware by a human: one SM-G973F, on one
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
-This fork is general Galaxy S10 support on its `main` branch. The Mali-G76 GPU (Panfrost) is new on `main` and not
-yet in a release; it needs the device tree from the U-Boot fork.
+This fork is general Galaxy S10 support on its `main` branch: Wi-Fi (v1), the charger and the memory fix (v2), the
+Mali-G76 GPU through Panfrost (v3), and a hardware watchdog that reboots a hung phone (v4). Each release ships the
+kernel and U-Boot together, because the device tree lives in U-Boot.
 
 ## The S10 project
 
@@ -49,11 +50,13 @@ Updates: [@t24_lab on X](https://x.com/t24_lab)
 | Unloading and reloading the driver | Working |
 | Wi-Fi Direct / P2P interface | Not working (creating the P2P device times out; normal Wi-Fi is unaffected) |
 | WPA3 / SAE, access-point mode, monitor mode | Untested |
+| Mali-G76 GPU (v3) | Working: Panfrost, OpenGL ES (kmscube), OpenCL through Rusticl, 156-702 MHz; Vulkan untested |
+| Hardware watchdog (v4) | Working: systemd feeds it as `/dev/watchdog0`; if the system hangs, the phone resets after 60 s |
 | Bluetooth | Not part of this work |
 
 ## What changed
 
-Kernel, branch [`s10-wifi`](../../tree/s10-wifi) (9 code commits on top of the port's `62fdd500d8ca`, plus this file):
+Kernel, branch [`main`](../../tree/main) (code commits on top of the port's `62fdd500d8ca`, plus this file):
 
 - **New PCIe host driver** `pcie-exynos9820` for the Wi-Fi root port, with INTx demultiplexing.
   The SoC's SysMMU is left in bypass.
@@ -66,14 +69,18 @@ Kernel, branch [`s10-wifi`](../../tree/s10-wifi) (9 code commits on top of the p
   - D2H sync checks
   - a watchdog reset fix so the driver can be reloaded
   - the `roamoff` parameter applied early
+- **Panfrost (v3, by Gregor Sprint):** support for the non-coherent Exynos 9820 Mali-G76 (AArch64 page-table
+  format, coherency mode set after every reset).
+- **Watchdog (v4):** `s3c2410_wdt` gains `samsung,exynos9820-wdt`, using the PMU registers of Samsung's own driver.
 - **max77705 charger (v2):** the charge voltage is writable, so you can cap it for a phone that
   stays plugged in (see "Battery: charge limit" below).
 
 U-Boot (this port boots through U-Boot, which supplies the device tree), branch
-[`s10-wifi`](https://github.com/tannerbruhn/u-boot/tree/s10-wifi): adds the Wi-Fi nodes for the
+[`main`](https://github.com/tannerbruhn/u-boot/tree/main): adds the Wi-Fi nodes for the
 PCIe controller, PHY, power-enable regulator (GPG0-5), PERST/CLKREQ, and the host-wake pin.
 **v2** also reserves the bootloader's debug-snapshot memory (`0xfd900000`, 39 MB), which fixes
-the memory corruption described at the top.
+the memory corruption described at the top. **v3** adds the Mali-G76 GPU node and its rates up to Samsung's stock
+702 MHz; **v4** adds the cluster 0 watchdog.
 
 ## Requirements
 
@@ -93,11 +100,13 @@ the memory corruption described at the top.
    sudo ./s10-wifi-install.sh
    sudo reboot
    ```
-   The installer does four things:
+   The installer does five things:
    - copies the firmware from the vendor partition
-   - backs up your boot partition to `/root/`, then writes U-Boot with the Wi-Fi device tree
+   - backs up your boot partition to `/root/`, then writes U-Boot with the S10 device tree
    - installs the kernel and modules as a **one-time trial boot entry**
    - sets `brcmfmac roamoff=1`
+   - (v4) lets systemd use the hardware watchdog (`RuntimeWatchdogSec=60s` in
+     `/etc/systemd/system.conf.d/90-s10-watchdog.conf`)
 
    Your stock kernel entry is not touched. If the trial boot goes wrong, reboot again and the
    stock kernel comes back.
@@ -150,7 +159,7 @@ Keep an always-on phone somewhere it can shed heat.
 
 ## Building from source
 
-Build the kernel at branch `s10-wifi` with the port's `config-postmarketos-exynos9820.aarch64`,
+Build the kernel at branch `main` with the port's `config-postmarketos-exynos9820.aarch64`,
 merged with `s10-wifi.config` from the release:
 
 ```sh
@@ -160,14 +169,17 @@ scripts/kconfig/merge_config.sh -m .config s10-wifi.config
 Use clang/LLVM, `LLVM=1`. The kernel release string must stay `7.2.0-rc2`, so that the stock
 modules still load.
 
-Build U-Boot at branch `s10-wifi` with `make exynos9820_defconfig && make`, then package it with
-AOSP `mkbootimg --kernel u-boot.bin`.
+Build U-Boot at branch `main` with `make exynos9820_defconfig && make`, then package it with
+AOSP `mkbootimg --kernel u-boot.bin` (Android boot image header v0, kernel only). Ubuntu 24.04's packaged
+`mkbootimg` is broken; check your packer by re-packing a release's `u-boot.bin`: the result must be byte-identical
+to its `uboot-wifi-boot.img`.
 
 ## Credits
 
 Built on the Exynos 9820 mainline port by chiffathefox (kernel and U-Boot) and the
-postmarketOS / Nura device port. Hardware details were cross-checked against Samsung's GPL
-kernel release (`bcmdhd_101_16`, `pcie-exynos-host`).
+postmarketOS / Nura device port. GPU (v3): Panfrost support and the GPU node by Gregor Sprint
+(omnipha/linux-samsung-s10-exynos9820). Hardware details were cross-checked against Samsung's GPL
+kernel release (`bcmdhd_101_16`, `pcie-exynos-host`, and for v4 the vendor watchdog driver and device tree).
 
 Code: GPL-2.0, as part of the kernel and U-Boot. The firmware is not included and remains
 Samsung's / Broadcom's.
