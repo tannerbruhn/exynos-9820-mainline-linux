@@ -8,6 +8,12 @@ Until now the port had no Wi-Fi.
 > **This code was written by AI** and tested on real hardware by a human: one SM-G973F, on one
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
+This fork is general Galaxy S10 support, on its `main` branch: Wi-Fi, the MAX77705 charger, and (new on `main`, not
+yet in a release) the Mali-G76 GPU through Panfrost, which needs the device tree from
+[tannerbruhn/u-boot](https://github.com/tannerbruhn/u-boot). Running LLMs on the phone:
+[tannerbruhn/s10-llm-recipes](https://github.com/tannerbruhn/s10-llm-recipes). Updates:
+[@t24_lab on X](https://x.com/t24_lab).
+
 > **⚠️ v1 users: update to v2.** The port's device tree let Linux use 39 MB of RAM
 > (`0xfd900000-0xffffffff`) that the bootloader's debug logger keeps writing to after boot.
 > Under memory pressure (large downloads, an LLM, zram swap) the kernel puts data there and it
