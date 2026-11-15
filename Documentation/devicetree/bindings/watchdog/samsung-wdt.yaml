@@ -25,6 +25,7 @@ properties:
           - samsung,exynos7-wdt                   # for Exynos7
           - samsung,exynos850-wdt                 # for Exynos850
           - samsung,exynos990-wdt                 # for Exynos990
+          - samsung,exynos9820-wdt                # for Exynos9820
           - samsung,exynosautov9-wdt              # for Exynosautov9
           - samsung,exynosautov920-wdt            # for Exynosautov920
       - items:
@@ -99,6 +100,7 @@ allOf:
           contains:
             enum:
               - samsung,exynos990-wdt
+              - samsung,exynos9820-wdt
     then:
       properties:
         clocks:
