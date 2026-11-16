@@ -127,23 +127,35 @@ To undo: `sudo ./s10-wifi-install.sh --uninstall`. The U-Boot with the extra dev
 is harmless for the stock kernel. To restore the old boot partition exactly:
 `sudo dd if=/root/boot-partition-backup-*.img of=/dev/disk/by-partlabel/boot bs=1M`.
 
-## Battery: charge limit (optional, v2)
+## Battery: charge limit (strongly recommended for a phone that stays plugged in)
 
-A phone that is always plugged in ages its battery fastest at 100%. With v2 you can cap the
-charge voltage; 4.10 V keeps the battery around 75-80%. Create
+A phone that is always plugged in ages its battery fastest when full and warm. With v2 you can
+cap the charge voltage; 4.00 V keeps the battery around 60-65%. Create
 `/etc/udev/rules.d/90-s10-charge-limit.rules` containing:
 
 ```
-ACTION=="add|change", SUBSYSTEM=="power_supply", KERNEL=="max77705-charger", ATTR{constant_charge_voltage}="4100000", ATTR{constant_charge_current}="1000000"
+ACTION=="add", SUBSYSTEM=="power_supply", KERNEL=="max77705-charger", ATTR{constant_charge_voltage}="4000000", ATTR{constant_charge_current}="500000"
 ```
 
-then apply it with `sudo udevadm trigger -c change /sys/class/power_supply/max77705-charger`.
-This also caps the charge current at 1 A to limit heat. The battery temperature sensor is not
-supported on this port (it reads a fixed 37.3 °C), so the kernel cannot see a hot battery.
-Keep an always-on phone somewhere it can shed heat.
+then apply it with `sudo udevadm trigger -c add /sys/class/power_supply/max77705-charger`.
+The driver's default charge current is 450 mA, so 500 mA is about the same, not a cut. The rule
+runs only on "add": the charger reports a "change" on every cable event.
+
+The battery temperature sensor is not supported on this port (it reads a fixed 37.3 °C). This
+means charging is never reduced or stopped because the battery is hot, with any kernel. Do not
+charge it or run sustained load in a case, in the sun, in a car, or unattended without a thermal
+guard, and keep an always-on phone on a non-flammable surface where it can shed heat.
 
 ## Known issues
 
+- **The charger stops at "Full" and does not restart** until the cable is replugged or the
+  phone reboots: the driver disables the chip's automatic restart. A phone left on the charger
+  slowly drains, faster under load. Workaround after each boot (needs `i2c-tools`), which turns on
+  the chip's own restart 150 mV below the charge voltage:
+  `r=$(sudo i2cget -f -y 1 0x69 0xb8); sudo i2cset -f -y 1 0x69 0xb8 $(printf 0x%02x $(( (r & 0xcf) | 0x10 )))`
+- **The input current limit only goes down.** Under load the charger lowers it in 25 mA steps
+  and never raises it again until a replug or reboot, so a long heavy job can draw on the
+  battery even with the cable in.
 - **USB networking may not come back after a reboot** until the cable is unplugged and plugged
   back in. This happens with or without this work. Once Wi-Fi is set up, SSH over Wi-Fi works
   instead.
