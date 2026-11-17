@@ -9,8 +9,8 @@ Until now the port had no Wi-Fi.
 > home network. It is not reviewed by the upstream maintainers. Use it at your own risk.
 
 This fork is general Galaxy S10 support on its `main` branch: Wi-Fi (v1), the charger and the memory fix (v2), the
-Mali-G76 GPU through Panfrost (v3), and a hardware watchdog that reboots a hung phone (v4). Each release ships the
-kernel and U-Boot together, because the device tree lives in U-Boot.
+Mali-G76 GPU through Panfrost (v3), a hardware watchdog that reboots a hung phone (v4), and 56 MB more RAM
+(v5, experimental). Each release ships the kernel and U-Boot together, because the device tree lives in U-Boot.
 
 ## The S10 project
 
@@ -26,6 +26,12 @@ postmarketOS. The kernel and U-Boot forks are general S10 support; the other two
   numbers
 
 Updates: [@t24_lab on X](https://x.com/t24_lab)
+
+> **v5 (experimental): +56 MB of RAM.** U-Boot's device tree no longer reserves two regions that mainline never uses:
+> the secure camera's (34 MB at 0x96000000) and the modem's spare area (22 MB at 0xd0000000). Both passed memory
+> tests from the CPU and from the storage controller (DMA) as normal RAM. The kernel is unchanged from v4. Tested on
+> one phone for one day. The other modem regions stay reserved: releasing them makes the boot hang. Upgrading from v4:
+> run the new installer the same way (it backs up the boot partition first).
 
 > **⚠️ v1 users: update to v2.** The port's device tree let Linux use 39 MB of RAM
 > (`0xfd900000-0xffffffff`) that the bootloader's debug logger keeps writing to after boot.
@@ -145,6 +151,15 @@ The battery temperature sensor is not supported on this port (it reads a fixed 3
 means charging is never reduced or stopped because the battery is hot, with any kernel. Do not
 charge it or run sustained load in a case, in the sun, in a car, or unattended without a thermal
 guard, and keep an always-on phone on a non-flammable surface where it can shed heat.
+
+## Running without a battery (experimental)
+
+The phone boots and runs on USB power with the battery disconnected if the kernel starts with the `powersave`
+governor: add `cpufreq.default_governor=powersave` to the boot entry's `options`. Without it, all eight cores start
+at the boot clock, the load spike browns the phone out within about a second (a battery normally buffers it), and it
+reboots in a loop. Once booted, the normal governor and clock caps can be set again; tested with a full LLM load
+(about 1 A at 5 V) on one phone. Use a real charger, not a laptop port. Details and a ready setup:
+[s10-llm-recipes/setup/bare-board](https://github.com/tannerbruhn/s10-llm-recipes/tree/main/setup/bare-board).
 
 ## Known issues
 
